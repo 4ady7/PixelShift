@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, type RefObject } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import type { Tool } from "@/lib/editor/types";
 import { fillPolygon, fillRect, stamp, type Mask, type Point } from "@/lib/mask/mask";
 
@@ -37,6 +37,9 @@ export const CanvasStage = forwardRef<StageHandle, CanvasStageProps>(function Ca
   const previewRef = useRef<HTMLCanvasElement>(null);
   const zoomRef = useRef(1);
   const panRef = useRef({ x: 0, y: 0 });
+  const userViewRef = useRef(false);
+  const cursorRef = useRef<HTMLDivElement>(null);
+  const [splitBox, setSplitBox] = useState({ left: 0, top: 0, height: 0 });
   const onZoomChangeRef = useRef(props.onZoomChange);
   onZoomChangeRef.current = props.onZoomChange;
   const propsRef = useRef(props);
@@ -73,9 +76,24 @@ export const CanvasStage = forwardRef<StageHandle, CanvasStageProps>(function Ca
     world.style.width = `${propsRef.current.width * zoom}px`;
     world.style.height = `${propsRef.current.height * zoom}px`;
     world.style.transform = `translate(${panRef.current.x}px, ${panRef.current.y}px)`;
+    syncSplitHandle();
+  }
+
+  function syncSplitHandle() {
+    const viewport = viewportRef.current;
+    const world = worldRef.current;
+    if (!viewport || !world || !propsRef.current.split) return;
+    const view = viewport.getBoundingClientRect();
+    const image = world.getBoundingClientRect();
+    setSplitBox({
+      left: image.left - view.left + image.width * propsRef.current.splitRatio,
+      top: image.top - view.top,
+      height: image.height,
+    });
   }
 
   function fit() {
+    userViewRef.current = false;
     const viewport = viewportRef.current;
     if (!viewport) return;
     const availableWidth = Math.max(1, viewport.clientWidth - 24);
@@ -91,6 +109,7 @@ export const CanvasStage = forwardRef<StageHandle, CanvasStageProps>(function Ca
   }
 
   function actualSize() {
+    userViewRef.current = true;
     const viewport = viewportRef.current;
     if (!viewport) return;
     zoomRef.current = 1;
@@ -115,7 +134,10 @@ export const CanvasStage = forwardRef<StageHandle, CanvasStageProps>(function Ca
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
-    const observer = new ResizeObserver(() => fitRef.current());
+    const observer = new ResizeObserver(() => {
+      if (userViewRef.current) return;
+      fitRef.current();
+    });
     observer.observe(viewport);
     return () => observer.disconnect();
   }, []);
@@ -132,6 +154,7 @@ export const CanvasStage = forwardRef<StageHandle, CanvasStageProps>(function Ca
       const imageX = (cursorX - panRef.current.x) / previous;
       const imageY = (cursorY - panRef.current.y) / previous;
       const next = clamp(previous * (event.deltaY < 0 ? 1.08 : 1 / 1.08), 0.05, 12);
+      userViewRef.current = true;
       zoomRef.current = next;
       panRef.current = { x: cursorX - imageX * next, y: cursorY - imageY * next };
       applyView();
@@ -144,6 +167,10 @@ export const CanvasStage = forwardRef<StageHandle, CanvasStageProps>(function Ca
   useEffect(() => {
     redrawOverlay(overlayRef.current, props.maskRef.current, props.showMask && !props.compare);
   }, [props.maskRevision, props.showMask, props.compare, props.width, props.height, props.maskRef]);
+
+  useLayoutEffect(() => {
+    syncSplitHandle();
+  }, [props.split, props.splitRatio]);
 
   function imagePoint(event: React.PointerEvent): Point | null {
     const canvas = overlayRef.current;
@@ -214,9 +241,20 @@ export const CanvasStage = forwardRef<StageHandle, CanvasStageProps>(function Ca
     }
   }
 
+  function placeBrushCursor(event: { clientX: number; clientY: number }) {
+    const cursor = cursorRef.current;
+    const viewport = viewportRef.current;
+    if (!cursor || !viewport) return;
+    const rect = viewport.getBoundingClientRect();
+    cursor.hidden = false;
+    cursor.style.transform = `translate(${event.clientX - rect.left}px, ${event.clientY - rect.top}px) translate(-50%, -50%)`;
+  }
+
   function onPointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    if ((props.tool === "brush" || props.tool === "erase") && !props.spacePan) placeBrushCursor(event);
     if (gesture.current.pointer !== event.pointerId) return;
     if (gesture.current.mode === "pan") {
+      userViewRef.current = true;
       panRef.current = {
         x: gesture.current.panX + (event.clientX - gesture.current.clientX),
         y: gesture.current.panY + (event.clientY - gesture.current.clientY),
@@ -236,6 +274,9 @@ export const CanvasStage = forwardRef<StageHandle, CanvasStageProps>(function Ca
       return;
     }
     if (gesture.current.mode === "lasso") {
+      const last = gesture.current.points[gesture.current.points.length - 1];
+      const minimum = 1.5 / zoomRef.current;
+      if (last && Math.hypot(point.x - last.x, point.y - last.y) < minimum) return;
       gesture.current.points.push(point);
       drawLassoPreview(previewRef.current, gesture.current.points);
     }
@@ -273,10 +314,11 @@ export const CanvasStage = forwardRef<StageHandle, CanvasStageProps>(function Ca
 
   function onSplitPointerMove(event: React.PointerEvent<HTMLButtonElement>) {
     if (gesture.current.mode !== "split" || gesture.current.pointer !== event.pointerId) return;
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-    const rect = viewport.getBoundingClientRect();
-    props.onSplitRatio(clamp((event.clientX - rect.left) / rect.width, 0.04, 0.96));
+    const world = worldRef.current;
+    if (!world) return;
+    const image = world.getBoundingClientRect();
+    if (image.width <= 0) return;
+    props.onSplitRatio(clamp((event.clientX - image.left) / image.width, 0.04, 0.96));
   }
 
   const cursor = props.spacePan || props.tool === "pan" ? "cursor-grab" : props.tool === "rect" || props.tool === "lasso" ? "cursor-cross" : "cursor-none";
@@ -289,8 +331,20 @@ export const CanvasStage = forwardRef<StageHandle, CanvasStageProps>(function Ca
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
+      onPointerLeave={() => {
+        if (cursorRef.current) cursorRef.current.hidden = true;
+      }}
       onContextMenu={(event) => event.preventDefault()}
     >
+      {props.tool === "brush" || props.tool === "erase" ? (
+        <div
+          ref={cursorRef}
+          className="brush-cursor"
+          hidden
+          style={{ width: props.brushSize, height: props.brushSize }}
+          aria-hidden="true"
+        />
+      ) : null}
       <div className="world" ref={worldRef}>
         <img src={props.originalUrl} alt="" draggable={false} />
         <img
@@ -309,7 +363,7 @@ export const CanvasStage = forwardRef<StageHandle, CanvasStageProps>(function Ca
         <button
           type="button"
           className="split-handle"
-          style={{ left: `${props.splitRatio * 100}%` }}
+          style={{ left: splitBox.left, top: splitBox.top, height: splitBox.height }}
           aria-label="Drag to compare original and edit"
           onPointerDown={onSplitPointerDown}
           onPointerMove={onSplitPointerMove}

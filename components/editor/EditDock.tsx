@@ -74,10 +74,10 @@ export function EditDock(props: EditDockProps) {
               </button>
               {current && !original ? (
                 <span className="version-actions">
-                  <button type="button" onClick={() => props.onDuplicate(version.id)}>
+                  <button type="button" disabled={props.busy} onClick={() => props.onDuplicate(version.id)}>
                     Duplicate
                   </button>
-                  <button type="button" onClick={() => props.onDelete(version.id)}>
+                  <button type="button" disabled={props.busy} onClick={() => props.onDelete(version.id)}>
                     Delete
                   </button>
                 </span>
@@ -213,12 +213,12 @@ export function EditDock(props: EditDockProps) {
         <div className="variants" role="list" aria-label="Variations">
           {props.variants.map((variant) => (
             <article key={variant.id} role="listitem">
-              <button type="button" disabled={!variant.url} onClick={() => props.onApply(variant)}>
+              <button type="button" aria-label={`Use ${variant.label}`} disabled={!variant.url || props.busy} onClick={() => props.onApply(variant)}>
                 {variant.url ? <img src={variant.url} alt="" /> : <span>{variant.status === "error" ? "Failed" : "Generating"}</span>}
               </button>
               <p>{variant.label}</p>
               {variant.error && variant.error !== props.error ? <p className="variant-error">{variant.error}</p> : null}
-              {variant.status === "error" ? (
+              {variant.status === "error" && !props.busy ? (
                 <button type="button" onClick={() => props.onRetry(variant)}>
                   Retry
                 </button>

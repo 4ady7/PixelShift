@@ -1,5 +1,6 @@
 import sharp from "sharp";
 import { blendPreserving } from "./composite";
+import { letterboxFrame, type CanvasSize, type Frame } from "./geometry";
 import { MAX_EDGE, MAX_PIXELS, MAX_UPLOAD_BYTES } from "./limits";
 import { sniffImage, type ImageKind } from "./sniff";
 
@@ -17,6 +18,7 @@ export type PhotographInfo = {
   width: number;
   height: number;
   kind: ImageKind;
+  oriented: Buffer;
 };
 
 export async function readPhotograph(buffer: Buffer): Promise<PhotographInfo> {
@@ -33,48 +35,70 @@ export async function readPhotograph(buffer: Buffer): Promise<PhotographInfo> {
   } catch {
     throw new EditInputError("This photograph couldn't be read. It may be damaged.");
   }
-  const width = metadata.width ?? 0;
-  const height = metadata.height ?? 0;
+
+  let oriented = buffer;
+  let width = metadata.width ?? 0;
+  let height = metadata.height ?? 0;
+  if ((metadata.orientation ?? 1) > 1) {
+    try {
+      oriented = await sharp(buffer, { failOn: "error" }).rotate().toBuffer();
+      const rotated = await sharp(oriented).metadata();
+      width = rotated.width ?? 0;
+      height = rotated.height ?? 0;
+    } catch {
+      throw new EditInputError("This photograph couldn't be read. It may be damaged.");
+    }
+  }
+
   if (width < 1 || height < 1) {
     throw new EditInputError("This photograph couldn't be read. It may be damaged.");
   }
   if (width > MAX_EDGE || height > MAX_EDGE || width * height > MAX_PIXELS) {
     throw new EditInputError("This photograph is too large to edit. Use an image up to 8000 pixels on the long side.");
   }
-  return { width, height, kind };
+  return { width, height, kind, oriented };
 }
 
-export async function resizePng(buffer: Buffer, width: number, height: number): Promise<Buffer> {
-  return sharp(buffer, { failOn: "error" })
-    .rotate()
-    .resize(width, height, { fit: "fill" })
+export async function placeOnCanvas(buffer: Buffer, canvas: CanvasSize, frame: Frame): Promise<Buffer> {
+  const resized = await sharp(buffer, { failOn: "error" }).resize(frame.width, frame.height, { fit: "fill" }).png().toBuffer();
+  return sharp({
+    create: { width: canvas.width, height: canvas.height, channels: 3, background: { r: 0, g: 0, b: 0 } },
+  })
+    .composite([{ input: resized, left: frame.left, top: frame.top }])
     .png()
     .toBuffer();
 }
 
-export async function selectionToEditMask(selectionPng: Buffer, width: number, height: number): Promise<Buffer> {
-  const { data, info } = await sharp(selectionPng, { failOn: "error" })
-    .rotate()
-    .resize(width, height, { fit: "fill" })
+export async function buildEditMask(selectionPng: Buffer, canvas: CanvasSize, frame: Frame): Promise<Buffer> {
+  const resized = await sharp(selectionPng, { failOn: "error" })
+    .resize(frame.width, frame.height, { fit: "fill" })
     .ensureAlpha()
     .raw()
-    .toBuffer({ resolveWithObject: true });
+    .toBuffer();
+  const raw = Buffer.alloc(canvas.width * canvas.height * 4);
+  for (let i = 0; i < canvas.width * canvas.height; i += 1) raw[i * 4 + 3] = 255;
 
   let strongest = 0;
-  const pixels = info.width * info.height;
-  const raw = Buffer.alloc(pixels * 4);
-  for (let i = 0; i < pixels; i += 1) {
-    const selection = data[i * 4 + 3];
-    if (selection > strongest) strongest = selection;
-    const alpha = 255 - selection;
-    raw[i * 4] = 0;
-    raw[i * 4 + 1] = 0;
-    raw[i * 4 + 2] = 0;
-    raw[i * 4 + 3] = alpha;
+  for (let y = 0; y < frame.height; y += 1) {
+    for (let x = 0; x < frame.width; x += 1) {
+      const selection = resized[(y * frame.width + x) * 4 + 3];
+      if (selection > strongest) strongest = selection;
+      const offset = ((y + frame.top) * canvas.width + (x + frame.left)) * 4;
+      raw[offset + 3] = 255 - selection;
+    }
   }
   if (strongest < 8) throw new EditInputError("Select the area that should change.");
 
-  return sharp(raw, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
+  return sharp(raw, { raw: { width: canvas.width, height: canvas.height, channels: 4 } }).png().toBuffer();
+}
+
+export async function extractFrame(modelPng: Buffer, canvas: CanvasSize, frame: Frame, outWidth: number, outHeight: number): Promise<Buffer> {
+  const fitted = await sharp(modelPng, { failOn: "error" }).rotate().resize(canvas.width, canvas.height, { fit: "fill" }).png().toBuffer();
+  const cropped = await sharp(fitted)
+    .extract({ left: frame.left, top: frame.top, width: frame.width, height: frame.height })
+    .png()
+    .toBuffer();
+  return sharp(cropped).resize(outWidth, outHeight, { fit: "fill" }).png().toBuffer();
 }
 
 export async function projectEdit(options: {

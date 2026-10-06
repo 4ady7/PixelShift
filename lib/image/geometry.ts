@@ -2,6 +2,8 @@ import { MODEL_MAX_EDGE } from "./limits";
 
 export type CanvasSize = { width: number; height: number };
 
+export type Frame = { left: number; top: number; width: number; height: number };
+
 const BUCKETS: CanvasSize[] = [
   { width: 1024, height: 1024 },
   { width: 1536, height: 1024 },
@@ -37,6 +39,20 @@ export function closestBucket(width: number, height: number): CanvasSize {
     const candidateDistance = Math.abs(Math.log(candidate.width / candidate.height) - aspect);
     return candidateDistance < bestDistance ? candidate : best;
   });
+}
+
+export function letterboxFrame(sourceWidth: number, sourceHeight: number, canvasWidth: number, canvasHeight: number): Frame {
+  const scale = Math.min(canvasWidth / sourceWidth, canvasHeight / sourceHeight);
+  const width = Math.min(canvasWidth, Math.max(1, Math.round(sourceWidth * scale)));
+  const height = Math.min(canvasHeight, Math.max(1, Math.round(sourceHeight * scale)));
+  const left = Math.max(0, Math.floor((canvasWidth - width) / 2));
+  const top = Math.max(0, Math.floor((canvasHeight - height) / 2));
+  return {
+    left,
+    top,
+    width: Math.min(width, canvasWidth - left),
+    height: Math.min(height, canvasHeight - top),
+  };
 }
 
 function round16(value: number): number {

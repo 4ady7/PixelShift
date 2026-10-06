@@ -18,4 +18,5 @@ export type VariantState = {
   status: "pending" | "ready" | "error";
   url: string | null;
   error: string | null;
+  sourceVersionId: string;
 };

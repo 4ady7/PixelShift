@@ -29,17 +29,20 @@ export async function generateEdit(input: ProviderEditInput): Promise<Buffer> {
   form.append("n", "1");
   if (supportsInputFidelity(input.model)) form.append("input_fidelity", "high");
 
+  const timeout = AbortSignal.timeout(110_000);
+  const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
   let response: Response;
   try {
     response = await fetch(ENDPOINT, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}` },
       body: form,
-      signal: input.signal,
+      signal,
     });
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new ProviderError("Generation was cancelled.", 499);
+    if (input.signal?.aborted) throw new ProviderError("Generation was cancelled.", 499);
+    if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+      throw new ProviderError("The image service didn't respond in time.", 504);
     }
     throw new ProviderError("We couldn't generate this edit. The image service didn't respond.", 502);
   }

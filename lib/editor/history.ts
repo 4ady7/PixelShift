@@ -1,8 +1,16 @@
 export class EditHistory<T> {
   private undoStack: T[] = [];
   private redoStack: T[] = [];
+  private limit: number;
 
-  constructor(private readonly limit = 30) {}
+  constructor(limit = 30) {
+    this.limit = limit;
+  }
+
+  setLimit(limit: number): void {
+    this.limit = Math.max(1, limit);
+    while (this.undoStack.length > this.limit) this.undoStack.shift();
+  }
 
   get canUndo(): boolean {
     return this.undoStack.length > 0;

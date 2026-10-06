@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { EditHistory } from "../lib/editor/history";
-import { chooseModelCanvas, closestBucket } from "../lib/image/geometry";
+import { chooseModelCanvas, closestBucket, letterboxFrame } from "../lib/image/geometry";
 import { blendPreserving } from "../lib/image/composite";
 import { sniffHeic, sniffImage } from "../lib/image/sniff";
 import { createMask, dilate, erode, feather, fillPolygon, fillRect, invertMask, stamp } from "../lib/mask/mask";
@@ -82,4 +82,24 @@ test("history restores the previous snapshot and can redo it", () => {
   assert.equal(history.redo("original"), "edited");
   history.push("branch");
   assert.equal(history.canRedo, false);
+});
+
+test("history limit drops the oldest snapshots", () => {
+  const history = new EditHistory<number>(3);
+  history.push(1);
+  history.push(2);
+  history.push(3);
+  history.push(4);
+  assert.equal(history.undo(5), 4);
+  history.setLimit(1);
+  assert.equal(history.undo(4), 3);
+  assert.equal(history.canUndo, false);
+});
+
+test("letterbox keeps a very wide photograph from being stretched", () => {
+  const frame = letterboxFrame(800, 100, 768, 256);
+  assert.ok(frame.width / frame.height > 7);
+  assert.ok(frame.left >= 0 && frame.top >= 0);
+  assert.ok(frame.left + frame.width <= 768);
+  assert.ok(frame.top + frame.height <= 256);
 });

@@ -241,10 +241,19 @@ button:disabled { cursor: not-allowed; opacity: 0.4; }
 
 .world img { pointer-events: none; }
 
+.brush-cursor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 4;
+  border: 1px solid rgba(243, 239, 230, 0.92);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(18, 17, 14, 0.55);
+  pointer-events: none;
+}
+
 .split-handle {
   position: absolute;
-  top: 0;
-  bottom: 0;
   width: 18px;
   transform: translateX(-50%);
   border-radius: 0;
@@ -398,16 +407,16 @@ button:disabled { cursor: not-allowed; opacity: 0.4; }
   .empty .brand { position: static; margin-bottom: 28px; }
   .empty { align-content: start; padding-top: 28px; }
   .topbar { height: auto; flex-wrap: wrap; padding: 12px; }
-  .top-actions, .top-end { width: 100%; justify-content: flex-start; }
+  .top-actions, .top-end { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
   .filename, .status { display: none; }
   .stage { height: auto; }
   .viewport { height: 68dvh; flex: none; }
   .dock {
     width: auto;
-    max-height: none;
+    max-height: 46dvh;
     margin: 12px;
+    overflow: auto;
   }
-  .split-handle { bottom: 0; }
   .variants { grid-template-columns: 1fr; }
 }
 

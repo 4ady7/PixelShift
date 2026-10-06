@@ -2,14 +2,16 @@ import { ProviderError } from "../../../lib/ai/errors";
 import { generateEdit, imageModel } from "../../../lib/ai/openai";
 import { buildEditPrompt } from "../../../lib/ai/prompt";
 import type { EditMode, Variation } from "../../../lib/editor/types";
-import { chooseModelCanvas } from "../../../lib/image/geometry";
+import { chooseModelCanvas, letterboxFrame } from "../../../lib/image/geometry";
+import { MAX_UPLOAD_BYTES } from "../../../lib/image/limits";
 import {
   assertDecodedImage,
+  buildEditMask,
   EditInputError,
+  extractFrame,
+  placeOnCanvas,
   projectEdit,
   readPhotograph,
-  resizePng,
-  selectionToEditMask,
 } from "../../../lib/image/prepare";
 
 export const runtime = "nodejs";
@@ -21,6 +23,10 @@ const VARIATIONS = new Set<Variation>(["conservative", "balanced", "creative"]);
 
 export async function POST(request: Request): Promise<Response> {
   try {
+    const declaredLength = Number(request.headers.get("content-length") ?? "");
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_UPLOAD_BYTES * 2 + 1_000_000) {
+      throw new EditInputError("This photograph is too large. Use an image under 25 MB.");
+    }
     const form = await request.formData();
     const mode = readMode(form.get("mode"));
     const variation = readVariation(form.get("variation"));
@@ -39,8 +45,9 @@ export async function POST(request: Request): Promise<Response> {
     const prompt = buildEditPrompt(instruction, mode, variation);
     const model = imageModel();
     const canvas = chooseModelCanvas(model, photo.width, photo.height);
-    const imagePng = await resizePng(image, canvas.width, canvas.height);
-    const maskPng = selectionBuffer ? await selectionToEditMask(selectionBuffer, canvas.width, canvas.height) : null;
+    const frame = letterboxFrame(photo.width, photo.height, canvas.width, canvas.height);
+    const imagePng = await placeOnCanvas(photo.oriented, canvas, frame);
+    const maskPng = selectionBuffer ? await buildEditMask(selectionBuffer, canvas, frame) : null;
     const edited = await generateEdit({
       model,
       prompt,
@@ -50,9 +57,10 @@ export async function POST(request: Request): Promise<Response> {
       signal: request.signal,
     });
     await assertDecodedImage(edited);
+    const extracted = await extractFrame(edited, canvas, frame, photo.width, photo.height);
     const composited = await projectEdit({
-      original: image,
-      edited,
+      original: photo.oriented,
+      edited: extracted,
       selectionPng: mode === "select" ? selectionBuffer : null,
     });
     const verified = await assertDecodedImage(composited);
@@ -94,6 +102,10 @@ function readVariation(value: FormDataEntryValue | null): Variation {
 
 async function fileBuffer(value: FormDataEntryValue | null, missing: string): Promise<Buffer> {
   if (!(value instanceof File)) throw new EditInputError(missing);
+  if (value.size === 0) throw new EditInputError(missing);
+  if (value.size > MAX_UPLOAD_BYTES) {
+    throw new EditInputError("This photograph is too large. Use an image under 25 MB.");
+  }
   const bytes = Buffer.from(await value.arrayBuffer());
   if (bytes.length === 0) throw new EditInputError(missing);
   return bytes;
